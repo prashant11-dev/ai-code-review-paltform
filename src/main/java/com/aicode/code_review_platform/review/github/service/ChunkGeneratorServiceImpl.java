@@ -1,6 +1,5 @@
 package com.aicode.code_review_platform.review.github.service;
 
-import com.aicode.code_review_platform.review.CodeReviewService;
 import com.aicode.code_review_platform.review.github.dto.CodeChunk;
 import com.aicode.code_review_platform.review.github.dto.CodeFile;
 import org.slf4j.Logger;
@@ -14,7 +13,7 @@ import java.util.List;
 @Service
 public class ChunkGeneratorServiceImpl implements ChunkGeneratorService {
 
-    private static final Logger logger = LoggerFactory.getLogger(CodeReviewService.class);
+    private static final Logger logger = LoggerFactory.getLogger(ChunkGeneratorServiceImpl.class);
 
     @Value("${app.ai.max-chunk-size}")
     private int maxChunkSize;

@@ -29,6 +29,8 @@ public class CodeReaderServiceImpl implements CodeReaderService {
     @Override
     public List<CodeFile> readFiles(List<Path> paths, Path repositoryRoot) {
 
+        log.info("Reading {} candidate file(s) from {}", paths.size(), repositoryRoot);
+
         List<CodeFile> codeFiles = new ArrayList<>();
 
         for (Path path : paths) {
@@ -47,6 +49,8 @@ public class CodeReaderServiceImpl implements CodeReaderService {
                 log.warn("Failed to read file {}, skipping", path, e);
             }
         }
+
+        log.info("Read {} of {} candidate file(s) from {}", codeFiles.size(), paths.size(), repositoryRoot);
 
         return codeFiles;
     }
