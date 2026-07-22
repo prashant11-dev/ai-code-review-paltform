@@ -58,19 +58,11 @@ public class GithubReviewService {
     @Autowired
     private ObjectMapper objectMapper;
 
-    public ReviewSubmissionResponse submitGithubReview(
-            GithubReviewRequest request,
-            User user
-    ) {
+    public ReviewSubmissionResponse submitGithubReview(GithubReviewRequest request, User user) {
 
         logger.info("Submitting GitHub repository review for user: {}, repository: {}", user.getEmail(), request.getRepositoryUrl());
 
-        CodeReview review = CodeReview.builder()
-                .sourceType(AppEnums.ReviewSourceType.GITHUB)
-                .repositoryUrl(request.getRepositoryUrl())
-                .status(AppEnums.ReviewStatus.PENDING)
-                .user(user)
-                .build();
+        CodeReview review = CodeReview.builder().sourceType(AppEnums.ReviewSourceType.GITHUB).repositoryUrl(request.getRepositoryUrl()).status(AppEnums.ReviewStatus.PENDING).user(user).build();
 
         CodeReview saved = codeReviewRepo.save(review);
 
@@ -80,10 +72,7 @@ public class GithubReviewService {
         Path repositoryRoot = null;
 
         try {
-            repositoryRoot = repositoryCloneService.cloneRepository(
-                    saved.getRepositoryUrl(),
-                    saved.getId()
-            );
+            repositoryRoot = repositoryCloneService.cloneRepository(saved.getRepositoryUrl(), saved.getId());
             logger.info("Repository cloned for review id: {} at path: {}", saved.getId(), repositoryRoot);
 
             List<Path> paths = repositoryScannerService.scanRepository(repositoryRoot);
@@ -95,19 +84,13 @@ public class GithubReviewService {
             List<CodeChunk> chunks = chunkGeneratorService.generateChunks(files);
 
             if (chunks.isEmpty()) {
-                throw new IllegalArgumentException(
-                        "No supported source files found in repository (supported extensions: .java, .js, .ts, .jsx, .tsx, .py)"
-                );
+                throw new IllegalArgumentException("No supported source files found in repository (supported extensions: .java, .js, .ts, .jsx, .tsx, .py)");
             }
 
             List<AIReviewResult> chunkReviews = aiChunkReviewService.reviewChunks(chunks);
             logger.info("Completed AI review of {} chunk(s) for review id: {}", chunkReviews.size(), saved.getId());
 
-            RepositoryReviewContext context = RepositoryReviewContext.builder()
-                    .review(saved)
-                    .chunks(chunks)
-                    .chunkReviews(chunkReviews)
-                    .build();
+            RepositoryReviewContext context = RepositoryReviewContext.builder().review(saved).chunks(chunks).chunkReviews(chunkReviews).build();
 
             AIReviewResult result = reviewAggregatorService.aggregate(context);
             logger.info("Aggregated review result for review id: {}", saved.getId());
@@ -137,13 +120,7 @@ public class GithubReviewService {
 
     private ReviewSubmissionResponse mapToResponse(CodeReview review) {
 
-        return ReviewSubmissionResponse.builder()
-                .id(review.getId())
-                .repositoryUrl(review.getRepositoryUrl())
-                .reviewResult(review.getReviewResult())
-                .status(review.getStatus())
-                .createdAt(review.getCreatedAt())
-                .build();
+        return ReviewSubmissionResponse.builder().id(review.getId()).repositoryUrl(review.getRepositoryUrl()).reviewResult(review.getReviewResult()).status(review.getStatus()).createdAt(review.getCreatedAt()).build();
     }
 
 }
