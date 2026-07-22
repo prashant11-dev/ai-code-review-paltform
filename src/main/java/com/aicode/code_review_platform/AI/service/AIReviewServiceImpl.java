@@ -35,11 +35,15 @@ public class AIReviewServiceImpl implements AIReviewService {
         String prompt = buildPrompt(context);
 
         String result = geminiProvider.review(prompt);
+        log.debug("Raw Gemini response: {}", result);
+
         result = cleanJson(result);
+
+        AIReviewResult reviewResult = parseResponse(result);
 
         log.info("AI review completed");
 
-        return parseResponse(result);
+        return reviewResult;
 
     }
 
@@ -88,7 +92,8 @@ public class AIReviewServiceImpl implements AIReviewService {
         try {
             return objectMapper.readValue(res, AIReviewResult.class);
         } catch (RuntimeException e) {
-            throw new RuntimeException(e);
+            log.error("Failed to parse AI review response as JSON. Cleaned response: {}", res, e);
+            throw new RuntimeException("Failed to parse AI review response", e);
         }
     }
 
@@ -97,6 +102,11 @@ public class AIReviewServiceImpl implements AIReviewService {
         int start = response.indexOf("{");
 
         int end = response.lastIndexOf("}");
+
+        if (start == -1 || end == -1 || end < start) {
+            log.error("Gemini response did not contain a JSON object. Raw response: {}", response);
+            throw new RuntimeException("AI response did not contain valid JSON");
+        }
 
         return response.substring(
                 start,

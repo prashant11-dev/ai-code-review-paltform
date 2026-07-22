@@ -115,14 +115,20 @@ import java.util.List;
 
     private AIReviewResult processGithubReview(CodeReview review) {
 
-        Path repositoryRoot = repositoryCloneService.cloneRepository(
-                review.getRepositoryUrl(),
-                review.getId()
-        );
+        Path repositoryRoot = null;
 
         try {
+            repositoryRoot = repositoryCloneService.cloneRepository(
+                    review.getRepositoryUrl(),
+                    review.getId()
+            );
+            logger.info("Repository cloned for review id: {} at path: {}", review.getId(), repositoryRoot);
+
             List<Path> paths = repositoryScannerService.scanRepository(repositoryRoot);
+            logger.info("Scanned repository for review id: {}, found {} candidate file(s)", review.getId(), paths.size());
+
             List<CodeFile> files = codeReaderService.readFiles(paths, repositoryRoot);
+            logger.info("Read {} file(s) for review id: {}", files.size(), review.getId());
 
             List<CodeChunk> chunks = chunkGeneratorService.generateChunks(files);
 
@@ -133,6 +139,7 @@ import java.util.List;
             }
 
             List<AIReviewResult> chunkResults = aiChunkReviewService.reviewChunks(chunks);
+            logger.info("Completed AI review of {} chunk(s) for review id: {}", chunkResults.size(), review.getId());
 
             RepositoryReviewContext context = RepositoryReviewContext.builder()
                     .review(review)
@@ -140,9 +147,13 @@ import java.util.List;
                     .chunkReviews(chunkResults)
                     .build();
 
-            return reviewAggregatorService.aggregate(context);
+            AIReviewResult result = reviewAggregatorService.aggregate(context);
+            logger.info("Aggregated review result for review id: {}", review.getId());
+
+            return result;
 
         } catch (Exception e) {
+            logger.error("GitHub review failed for id: {} at repository {}: {}", review.getId(), review.getRepositoryUrl(), e.getMessage(), e);
             throw new RuntimeException("Failed to review GitHub repository", e);
         } finally {
             repositoryCloneService.deleteRepository(repositoryRoot);

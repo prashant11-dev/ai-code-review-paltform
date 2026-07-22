@@ -27,6 +27,8 @@ public class RepositoryCloneServiceImpl implements RepositoryCloneService {
 
         Path repositoryPath = Paths.get(repositoryConfig.getTempDirectory(), "review-" + reviewId);
 
+        log.info("Cloning repository {} for review id {} into {}", repositoryUrl, reviewId, repositoryPath);
+
         try {
             Files.createDirectories(repositoryPath);
 
@@ -40,7 +42,11 @@ public class RepositoryCloneServiceImpl implements RepositoryCloneService {
             return repositoryPath;
 
         } catch (IOException | GitAPIException e) {
-            throw new RepositoryCloneException("Failed to clone repository",
+            log.error("Failed to clone repository {} for review id {}: {}", repositoryUrl, reviewId, e.getMessage(), e);
+
+            deleteRepository(repositoryPath);
+
+            throw new RepositoryCloneException("Failed to clone repository: " + e.getMessage(),
                     e);
         }
     }

@@ -77,14 +77,21 @@ public class GithubReviewService {
         saved.setStatus(AppEnums.ReviewStatus.PROCESSING);
         codeReviewRepo.save(saved);
 
-        Path repositoryRoot = repositoryCloneService.cloneRepository(
-                saved.getRepositoryUrl(),
-                saved.getId()
-        );
+        Path repositoryRoot = null;
 
         try {
+            repositoryRoot = repositoryCloneService.cloneRepository(
+                    saved.getRepositoryUrl(),
+                    saved.getId()
+            );
+            logger.info("Repository cloned for review id: {} at path: {}", saved.getId(), repositoryRoot);
+
             List<Path> paths = repositoryScannerService.scanRepository(repositoryRoot);
+            logger.info("Scanned repository for review id: {}, found {} candidate file(s)", saved.getId(), paths.size());
+
             List<CodeFile> files = codeReaderService.readFiles(paths, repositoryRoot);
+            logger.info("Read {} file(s) for review id: {}", files.size(), saved.getId());
+
             List<CodeChunk> chunks = chunkGeneratorService.generateChunks(files);
 
             if (chunks.isEmpty()) {
@@ -94,6 +101,7 @@ public class GithubReviewService {
             }
 
             List<AIReviewResult> chunkReviews = aiChunkReviewService.reviewChunks(chunks);
+            logger.info("Completed AI review of {} chunk(s) for review id: {}", chunkReviews.size(), saved.getId());
 
             RepositoryReviewContext context = RepositoryReviewContext.builder()
                     .review(saved)
@@ -102,6 +110,7 @@ public class GithubReviewService {
                     .build();
 
             AIReviewResult result = reviewAggregatorService.aggregate(context);
+            logger.info("Aggregated review result for review id: {}", saved.getId());
 
             saved.setReviewResult(objectMapper.writeValueAsString(result));
             saved.setStatus(AppEnums.ReviewStatus.COMPLETED);
