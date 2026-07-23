@@ -8,6 +8,7 @@ import com.aicode.code_review_platform.auth.User;
 import com.aicode.code_review_platform.enums.AppEnums;
 import com.aicode.code_review_platform.review.CodeReview;
 import com.aicode.code_review_platform.review.CodeReviewRepo;
+import com.aicode.code_review_platform.review.ReviewChunk;
 import com.aicode.code_review_platform.review.github.dto.CodeChunk;
 import com.aicode.code_review_platform.review.github.dto.CodeFile;
 import com.aicode.code_review_platform.review.github.dto.GithubReviewRequest;
@@ -16,6 +17,7 @@ import com.aicode.code_review_platform.review.github.service.ChunkGeneratorServi
 import com.aicode.code_review_platform.review.github.service.CodeReaderService;
 import com.aicode.code_review_platform.review.github.service.RepositoryCloneService;
 import com.aicode.code_review_platform.review.github.service.RepositoryScannerService;
+import com.aicode.code_review_platform.review.github.service.ReviewChunkService;
 import com.aicode.code_review_platform.review.websocket.NotificationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,6 +47,9 @@ public class GithubReviewService {
 
     @Autowired
     private ChunkGeneratorService chunkGeneratorService;
+
+    @Autowired
+    private ReviewChunkService reviewChunkService;
 
     @Autowired
     private AIChunkReviewService aiChunkReviewService;
@@ -87,7 +92,10 @@ public class GithubReviewService {
                 throw new IllegalArgumentException("No supported source files found in repository (supported extensions: .java, .js, .ts, .jsx, .tsx, .py)");
             }
 
-            List<AIReviewResult> chunkReviews = aiChunkReviewService.reviewChunks(chunks);
+            List<ReviewChunk> reviewChunks = reviewChunkService.createPendingChunks(saved, chunks);
+            logger.info("Persisted {} chunk(s) for review id: {}", reviewChunks.size(), saved.getId());
+
+            List<AIReviewResult> chunkReviews = aiChunkReviewService.reviewChunks(reviewChunks, chunks);
             logger.info("Completed AI review of {} chunk(s) for review id: {}", chunkReviews.size(), saved.getId());
 
             RepositoryReviewContext context = RepositoryReviewContext.builder().review(saved).chunks(chunks).chunkReviews(chunkReviews).build();

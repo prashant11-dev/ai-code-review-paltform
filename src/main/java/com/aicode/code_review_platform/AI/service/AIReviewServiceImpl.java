@@ -47,7 +47,8 @@ public class AIReviewServiceImpl implements AIReviewService {
 
     }
 
-    private String buildPrompt(ReviewContext context) {
+    @Override
+    public String buildPrompt(ReviewContext context) {
 
         StringBuilder filesSection = new StringBuilder();
 
