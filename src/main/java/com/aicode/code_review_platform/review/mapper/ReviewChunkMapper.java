@@ -9,13 +9,14 @@ import org.springframework.stereotype.Component;
 @Component
 public class ReviewChunkMapper {
 
-    public ReviewChunk toEntity(CodeReview review, CodeChunk chunk) {
+    public ReviewChunk toEntity(CodeReview review, CodeChunk chunk, String prompt) {
         return ReviewChunk.builder()
                 .review(review)
                 .chunkNumber(chunk.getChunkNumber())
                 .status(AppEnums.ReviewStatus.PENDING)
                 .totalFiles(chunk.getFiles().size())
                 .totalCharacters(chunk.getTotalCharacters())
+                .prompt(prompt)
                 .build();
     }
 

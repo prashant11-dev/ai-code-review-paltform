@@ -37,10 +37,10 @@ public class ReviewChunk {
     @Column(nullable = false)
     private Integer totalCharacters;
 
-    @Column(columnDefinition = "LONGTEXT")
+    @Column(columnDefinition = "TEXT")
     private String prompt;
 
-    @Column(columnDefinition = "LONGTEXT")
+    @Column(columnDefinition = "TEXT")
     private String aiResponse;
 
     @CreationTimestamp

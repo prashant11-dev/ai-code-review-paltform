@@ -50,7 +50,8 @@ public class CodeReviewController {
 
         ReviewSubmissionResponse response = githubReviewService.submitGithubReview(request, user);
 
-        return ResponseEntity.ok(new ApiResponse<>(true, "GitHub review submitted", response));
+        return ResponseEntity.accepted()
+                .body(new ApiResponse<>(true, "Repository submitted successfully for processing.", response));
     }
 
     @PostMapping("/upload")

@@ -1,9 +1,5 @@
 package com.aicode.code_review_platform.review.github;
 
-import com.aicode.code_review_platform.AI.dto.AIReviewResult;
-import com.aicode.code_review_platform.AI.dto.RepositoryReviewContext;
-import com.aicode.code_review_platform.AI.service.AIChunkReviewService;
-import com.aicode.code_review_platform.AI.service.ReviewAggregatorService;
 import com.aicode.code_review_platform.auth.User;
 import com.aicode.code_review_platform.enums.AppEnums;
 import com.aicode.code_review_platform.review.CodeReview;
@@ -13,122 +9,138 @@ import com.aicode.code_review_platform.review.github.dto.CodeChunk;
 import com.aicode.code_review_platform.review.github.dto.CodeFile;
 import com.aicode.code_review_platform.review.github.dto.GithubReviewRequest;
 import com.aicode.code_review_platform.review.github.dto.ReviewSubmissionResponse;
+import com.aicode.code_review_platform.review.github.exception.GithubReviewException;
 import com.aicode.code_review_platform.review.github.service.ChunkGeneratorService;
 import com.aicode.code_review_platform.review.github.service.CodeReaderService;
 import com.aicode.code_review_platform.review.github.service.RepositoryCloneService;
 import com.aicode.code_review_platform.review.github.service.RepositoryScannerService;
 import com.aicode.code_review_platform.review.github.service.ReviewChunkService;
-import com.aicode.code_review_platform.review.websocket.NotificationService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
+import com.aicode.code_review_platform.review.rabbitmq.ChunkProducerService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import tools.jackson.databind.ObjectMapper;
 
+import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
 
+/**
+ * Orchestrates GitHub repository submission: clone, scan, chunk, persist and publish.
+ *
+ * <p>AI review happens asynchronously in the consumer of
+ * {@link com.aicode.code_review_platform.review.rabbitmq.RabbitMQConfig#CHUNK_REVIEW_QUEUE}, so
+ * this service returns as soon as every chunk has been handed to the broker.
+ */
 @Service
+@RequiredArgsConstructor
+@Slf4j
 public class GithubReviewService {
 
-    private static final Logger logger = LoggerFactory.getLogger(GithubReviewService.class);
+    private final CodeReviewRepo codeReviewRepo;
 
-    @Autowired
-    private CodeReviewRepo codeReviewRepo;
+    private final RepositoryCloneService repositoryCloneService;
 
-    @Autowired
-    private RepositoryCloneService repositoryCloneService;
+    private final RepositoryScannerService repositoryScannerService;
 
-    @Autowired
-    private RepositoryScannerService repositoryScannerService;
+    private final CodeReaderService codeReaderService;
 
-    @Autowired
-    private CodeReaderService codeReaderService;
+    private final ChunkGeneratorService chunkGeneratorService;
 
-    @Autowired
-    private ChunkGeneratorService chunkGeneratorService;
+    private final ReviewChunkService reviewChunkService;
 
-    @Autowired
-    private ReviewChunkService reviewChunkService;
-
-    @Autowired
-    private AIChunkReviewService aiChunkReviewService;
-
-    @Autowired
-    private ReviewAggregatorService reviewAggregatorService;
-
-    @Autowired
-    private NotificationService notificationService;
-
-    @Autowired
-    private ObjectMapper objectMapper;
+    private final ChunkProducerService chunkProducerService;
 
     public ReviewSubmissionResponse submitGithubReview(GithubReviewRequest request, User user) {
 
-        logger.info("Submitting GitHub repository review for user: {}, repository: {}", user.getEmail(), request.getRepositoryUrl());
+        CodeReview review = codeReviewRepo.save(
+                CodeReview.builder()
+                        .sourceType(AppEnums.ReviewSourceType.GITHUB)
+                        .repositoryUrl(request.getRepositoryUrl())
+                        .status(AppEnums.ReviewStatus.PENDING)
+                        .user(user)
+                        .build()
+        );
 
-        CodeReview review = CodeReview.builder().sourceType(AppEnums.ReviewSourceType.GITHUB).repositoryUrl(request.getRepositoryUrl()).status(AppEnums.ReviewStatus.PENDING).user(user).build();
-
-        CodeReview saved = codeReviewRepo.save(review);
-
-        saved.setStatus(AppEnums.ReviewStatus.PROCESSING);
-        codeReviewRepo.save(saved);
+        log.info(
+                "Starting GitHub review for reviewId={}, repository={}",
+                review.getId(),
+                review.getRepositoryUrl()
+        );
 
         Path repositoryRoot = null;
 
         try {
-            repositoryRoot = repositoryCloneService.cloneRepository(saved.getRepositoryUrl(), saved.getId());
-            logger.info("Repository cloned for review id: {} at path: {}", saved.getId(), repositoryRoot);
+            repositoryRoot = repositoryCloneService.cloneRepository(review.getRepositoryUrl(), review.getId());
+            log.info("Cloned repository for reviewId={} at path={}", review.getId(), repositoryRoot);
 
-            List<Path> paths = repositoryScannerService.scanRepository(repositoryRoot);
-            logger.info("Scanned repository for review id: {}, found {} candidate file(s)", saved.getId(), paths.size());
+            List<CodeChunk> chunks = generateChunks(repositoryRoot, review.getId());
 
-            List<CodeFile> files = codeReaderService.readFiles(paths, repositoryRoot);
-            logger.info("Read {} file(s) for review id: {}", files.size(), saved.getId());
+            List<ReviewChunk> reviewChunks = reviewChunkService.createPendingChunks(review, chunks);
+            log.info("Saved {} ReviewChunks for reviewId={}", reviewChunks.size(), review.getId());
 
-            List<CodeChunk> chunks = chunkGeneratorService.generateChunks(files);
+            publishChunks(reviewChunks, review.getId());
 
-            if (chunks.isEmpty()) {
-                throw new IllegalArgumentException("No supported source files found in repository (supported extensions: .java, .js, .ts, .jsx, .tsx, .py)");
-            }
+            review.setStatus(AppEnums.ReviewStatus.PROCESSING);
+            CodeReview processing = codeReviewRepo.save(review);
 
-            List<ReviewChunk> reviewChunks = reviewChunkService.createPendingChunks(saved, chunks);
-            logger.info("Persisted {} chunk(s) for review id: {}", reviewChunks.size(), saved.getId());
+            log.info("GitHub review submitted successfully for reviewId={}", review.getId());
 
-            List<AIReviewResult> chunkReviews = aiChunkReviewService.reviewChunks(reviewChunks, chunks);
-            logger.info("Completed AI review of {} chunk(s) for review id: {}", chunkReviews.size(), saved.getId());
-
-            RepositoryReviewContext context = RepositoryReviewContext.builder().review(saved).chunks(chunks).chunkReviews(chunkReviews).build();
-
-            AIReviewResult result = reviewAggregatorService.aggregate(context);
-            logger.info("Aggregated review result for review id: {}", saved.getId());
-
-            saved.setReviewResult(objectMapper.writeValueAsString(result));
-            saved.setStatus(AppEnums.ReviewStatus.COMPLETED);
-            codeReviewRepo.save(saved);
-
-            notificationService.notifyReviewCompleted(saved.getId());
-
-            logger.info("GitHub review completed for id: {}", saved.getId());
-
-            return mapToResponse(saved);
+            return mapToResponse(processing);
 
         } catch (Exception e) {
-            logger.error("GitHub review failed for id: {}, error: {}", saved.getId(), e.getMessage(), e);
+            log.error(
+                    "GitHub review submission failed for reviewId={}: {}",
+                    review.getId(),
+                    e.getMessage(),
+                    e
+            );
 
-            saved.setStatus(AppEnums.ReviewStatus.FAILED);
-            codeReviewRepo.save(saved);
+            review.setStatus(AppEnums.ReviewStatus.FAILED);
+            codeReviewRepo.save(review);
 
-            throw new RuntimeException("Failed to review GitHub repository", e);
+            throw new GithubReviewException("Failed to submit GitHub repository for review", e);
 
         } finally {
             repositoryCloneService.deleteRepository(repositoryRoot);
         }
     }
 
+    private List<CodeChunk> generateChunks(Path repositoryRoot, Long reviewId) throws IOException {
+
+        List<Path> paths = repositoryScannerService.scanRepository(repositoryRoot);
+        log.info("Scanned repository for reviewId={}, found {} candidate file(s)", reviewId, paths.size());
+
+        List<CodeFile> files = codeReaderService.readFiles(paths, repositoryRoot);
+        log.info("Read {} file(s) for reviewId={}", files.size(), reviewId);
+
+        List<CodeChunk> chunks = chunkGeneratorService.generateChunks(files);
+        log.info("Generated {} chunks for reviewId={}", chunks.size(), reviewId);
+
+        if (chunks.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "No supported source files found in repository (supported extensions: .java, .js, .ts, .jsx, .tsx, .py)"
+            );
+        }
+
+        return chunks;
+    }
+
+    private void publishChunks(List<ReviewChunk> reviewChunks, Long reviewId) {
+
+        log.info("Publishing {} ReviewChunks for reviewId={}", reviewChunks.size(), reviewId);
+
+        reviewChunks.forEach(chunkProducerService::publish);
+    }
+
     private ReviewSubmissionResponse mapToResponse(CodeReview review) {
 
-        return ReviewSubmissionResponse.builder().id(review.getId()).repositoryUrl(review.getRepositoryUrl()).reviewResult(review.getReviewResult()).status(review.getStatus()).createdAt(review.getCreatedAt()).build();
+        return ReviewSubmissionResponse.builder()
+                .id(review.getId())
+                .repositoryUrl(review.getRepositoryUrl())
+                .reviewResult(review.getReviewResult())
+                .status(review.getStatus())
+                .createdAt(review.getCreatedAt())
+                .build();
     }
 
 }
