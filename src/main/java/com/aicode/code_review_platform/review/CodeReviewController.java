@@ -46,10 +46,15 @@ public class CodeReviewController {
             Authentication authentication
     ) {
 
+        // Entry point of the GitHub pipeline. The JWT filter has already resolved the caller.
         User user = (User) authentication.getPrincipal();
 
+        // Clones, chunks and queues the repository. Returns as soon as the chunks are on the
+        // broker - no AI review has run at this point.
         ReviewSubmissionResponse response = githubReviewService.submitGithubReview(request, user);
 
+        // 202, not 200: the work was accepted, not finished. The client polls GET /reviews/{id}
+        // or waits for the WebSocket notification to get the actual result.
         return ResponseEntity.accepted()
                 .body(new ApiResponse<>(true, "Repository submitted successfully for processing.", response));
     }

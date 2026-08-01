@@ -36,10 +36,14 @@ public class ReviewChunkServiceImpl implements ReviewChunkService {
     @Override
     public List<ReviewChunk> createPendingChunks(CodeReview review, List<CodeChunk> chunks) {
 
+        // PHASE 6 - turn each in-memory chunk into a database row, building its prompt now while
+        // the file contents are still loaded. Status starts at PENDING: queued, not yet picked up.
         List<ReviewChunk> reviewChunks = chunks.stream()
                 .map(chunk -> reviewChunkMapper.toEntity(review, chunk, buildPrompt(chunk)))
                 .collect(Collectors.toList());
 
+        // Single batch insert - after this returns, every chunk has an id, which is the only thing
+        // the queue message needs to carry.
         List<ReviewChunk> saved = reviewChunkRepository.saveAll(reviewChunks);
 
         log.info("Persisted {} pending chunk(s) for review id: {}", saved.size(), review.getId());
@@ -47,6 +51,10 @@ public class ReviewChunkServiceImpl implements ReviewChunkService {
         return saved;
     }
 
+    /**
+     * Consumer side, step 1: a worker has picked the chunk off the queue and is about to call the
+     * AI. Stamping startedAt here is what makes processing time measurable later.
+     */
     @Override
     public ReviewChunk markStarted(ReviewChunk chunk) {
 
@@ -56,6 +64,10 @@ public class ReviewChunkServiceImpl implements ReviewChunkService {
         return reviewChunkRepository.save(chunk);
     }
 
+    /**
+     * Consumer side, terminal state: the AI returned a result for this chunk. The raw response is
+     * stored so aggregation can run later without re-calling the model.
+     */
     @Override
     public ReviewChunk markCompleted(ReviewChunk chunk, String prompt, String aiResponse) {
 
@@ -68,6 +80,10 @@ public class ReviewChunkServiceImpl implements ReviewChunkService {
         return reviewChunkRepository.save(chunk);
     }
 
+    /**
+     * Consumer side, terminal state: the AI call failed for this chunk. Records the attempt with
+     * no response, so a failed chunk is distinguishable from one still waiting in the queue.
+     */
     @Override
     public ReviewChunk markFailed(ReviewChunk chunk, String prompt) {
 
@@ -81,6 +97,8 @@ public class ReviewChunkServiceImpl implements ReviewChunkService {
 
     private String buildPrompt(CodeChunk chunk) {
 
+        // Renders the full AI prompt from the chunk's file contents. Done at submission time
+        // because the cloned repository is deleted before the consumer ever runs.
         return aiReviewService.buildPrompt(
                 ReviewContext.builder()
                         .files(chunk.getFiles())
@@ -90,6 +108,8 @@ public class ReviewChunkServiceImpl implements ReviewChunkService {
 
     private Long processingTimeMs(ReviewChunk chunk) {
 
+        // Null when the chunk reached a terminal state without ever being marked started, e.g. it
+        // failed before the AI call. Nothing meaningful to measure in that case.
         if (chunk.getStartedAt() == null) {
             return null;
         }
