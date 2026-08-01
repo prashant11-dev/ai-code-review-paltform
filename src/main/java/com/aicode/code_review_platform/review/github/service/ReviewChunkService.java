@@ -9,8 +9,9 @@ import java.util.List;
 public interface ReviewChunkService {
 
     /**
-     * PHASE 6 - persists one PENDING row per chunk, each with its prompt already rendered. This is
-     * the point where the work becomes durable and independent of the cloned files.
+     * PHASE 6 - persists one PENDING row per chunk, together with a snapshot of that chunk's
+     * files. This is the point where the work becomes durable and independent of the cloned
+     * repository, which is deleted immediately afterwards.
      */
     List<ReviewChunk> createPendingChunks(CodeReview review, List<CodeChunk> chunks);
 
