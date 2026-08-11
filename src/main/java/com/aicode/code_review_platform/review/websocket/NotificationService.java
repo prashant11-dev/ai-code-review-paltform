@@ -16,12 +16,43 @@ public class NotificationService {
             Long reviewId
     ) {
 
+        send(
+                reviewId,
+                AppEnums.ReviewStatus.COMPLETED,
+                "Review completed"
+        );
+    }
+
+    /**
+     * MILESTONE 4 - a review whose chunks all failed still has to reach the client, otherwise it
+     * waits forever on a notification that will never arrive.
+     *
+     * <p>Same destination and same payload as the success case; only the status differs, so an
+     * existing subscriber needs no changes to receive it.
+     */
+    public void notifyReviewFailed(
+            Long reviewId
+    ) {
+
+        send(
+                reviewId,
+                AppEnums.ReviewStatus.FAILED,
+                "Review failed"
+        );
+    }
+
+    private void send(
+            Long reviewId,
+            AppEnums.ReviewStatus status,
+            String message
+    ) {
+
         messagingTemplate.convertAndSend(
                 "/topic/reviews/" + reviewId,
                 ReviewNotification.builder()
                         .reviewId(reviewId)
-                        .status(AppEnums.ReviewStatus.COMPLETED)
-                        .message("Review completed")
+                        .status(status)
+                        .message(message)
                         .build()
         );
     }
