@@ -9,4 +9,8 @@ public interface AIReviewService {
             ReviewContext context
     );
 
+    String buildPrompt(
+            ReviewContext context
+    );
+
 }

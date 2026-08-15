@@ -3,7 +3,6 @@ package com.aicode.code_review_platform.AI.service;
 import com.aicode.code_review_platform.AI.provider.GeminiProvider;
 import com.aicode.code_review_platform.AI.dto.AIReviewResult;
 import com.aicode.code_review_platform.AI.dto.ReviewContext;
-import com.aicode.code_review_platform.review.github.dto.CodeFile;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,6 +20,13 @@ public class AIReviewServiceImpl implements AIReviewService {
 
     @Autowired
     private final ObjectMapper objectMapper;
+
+    /**
+     * MILESTONE 3 - prompt rendering was extracted into its own service. This class keeps the
+     * {@code buildPrompt} method so existing callers are unaffected, but it now delegates: the
+     * chunk consumer and the synchronous path must produce byte-identical prompts.
+     */
+    private final PromptBuilderService promptBuilderService;
 
     @Override
     public AIReviewResult review(
@@ -47,45 +53,9 @@ public class AIReviewServiceImpl implements AIReviewService {
 
     }
 
-    private String buildPrompt(ReviewContext context) {
-
-        StringBuilder filesSection = new StringBuilder();
-
-        for (CodeFile file : context.getFiles()) {
-            filesSection
-                    .append("File:\n")
-                    .append(file.getRelativePath() != null ? file.getRelativePath() : file.getFileName())
-                    .append("\n\n")
-                    .append(file.getContent())
-                    .append("\n\n-------------------------\n\n");
-        }
-
-        return """
-                You are an expert software engineer.
-
-                Review the following source file(s).
-
-                %s
-                Return ONLY valid JSON matching this exact structure.
-                Every array must contain plain strings only, not objects.
-
-                {
-                  "score": 85,
-                  "summary": "Brief overall summary of the code.",
-                  "bugs": ["Describe bug 1 as a plain string", "Describe bug 2 as a plain string"],
-                  "securityIssues": ["Describe security issue as a plain string"],
-                  "performanceIssues": ["Describe performance issue as a plain string"],
-                  "suggestions": ["Describe suggestion as a plain string"]
-                }
-
-                Rules:
-                - score is an integer from 0 to 100
-                - All array elements must be plain strings, never objects
-                - Use empty arrays [] when there are no items
-                - Do not include markdown
-                - Do not include explanations outside the JSON
-                - Return JSON only
-                """.formatted(filesSection);
+    @Override
+    public String buildPrompt(ReviewContext context) {
+        return promptBuilderService.buildPrompt(context.getFiles());
     }
 
     private AIReviewResult parseResponse(String res) {

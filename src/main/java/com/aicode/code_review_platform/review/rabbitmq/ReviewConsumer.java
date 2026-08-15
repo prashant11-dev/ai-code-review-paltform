@@ -9,12 +9,14 @@ import com.aicode.code_review_platform.AI.service.ReviewAggregatorService;
 import com.aicode.code_review_platform.review.CodeReview;
 import com.aicode.code_review_platform.enums.AppEnums;
 import com.aicode.code_review_platform.review.CodeReviewRepo;
+import com.aicode.code_review_platform.review.ReviewChunk;
 import com.aicode.code_review_platform.review.github.dto.CodeChunk;
 import com.aicode.code_review_platform.review.github.dto.CodeFile;
 import com.aicode.code_review_platform.review.github.service.ChunkGeneratorService;
 import com.aicode.code_review_platform.review.github.service.CodeReaderService;
 import com.aicode.code_review_platform.review.github.service.RepositoryCloneService;
 import com.aicode.code_review_platform.review.github.service.RepositoryScannerService;
+import com.aicode.code_review_platform.review.github.service.ReviewChunkService;
 import com.aicode.code_review_platform.review.websocket.NotificationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -55,6 +57,9 @@ import java.util.List;
 
     @Autowired
     private ChunkGeneratorService chunkGeneratorService;
+
+    @Autowired
+    private ReviewChunkService reviewChunkService;
 
     @Autowired
     private  ObjectMapper objectMapper;
@@ -138,7 +143,10 @@ import java.util.List;
                 );
             }
 
-            List<AIReviewResult> chunkResults = aiChunkReviewService.reviewChunks(chunks);
+            List<ReviewChunk> reviewChunks = reviewChunkService.createPendingChunks(review, chunks);
+            logger.info("Persisted {} chunk(s) for review id: {}", reviewChunks.size(), review.getId());
+
+            List<AIReviewResult> chunkResults = aiChunkReviewService.reviewChunks(reviewChunks, chunks);
             logger.info("Completed AI review of {} chunk(s) for review id: {}", chunkResults.size(), review.getId());
 
             RepositoryReviewContext context = RepositoryReviewContext.builder()

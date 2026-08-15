@@ -1,126 +1,176 @@
 package com.aicode.code_review_platform.review.github;
 
-import com.aicode.code_review_platform.AI.dto.AIReviewResult;
-import com.aicode.code_review_platform.AI.dto.RepositoryReviewContext;
-import com.aicode.code_review_platform.AI.service.AIChunkReviewService;
-import com.aicode.code_review_platform.AI.service.ReviewAggregatorService;
 import com.aicode.code_review_platform.auth.User;
 import com.aicode.code_review_platform.enums.AppEnums;
 import com.aicode.code_review_platform.review.CodeReview;
 import com.aicode.code_review_platform.review.CodeReviewRepo;
+import com.aicode.code_review_platform.review.ReviewChunk;
 import com.aicode.code_review_platform.review.github.dto.CodeChunk;
 import com.aicode.code_review_platform.review.github.dto.CodeFile;
 import com.aicode.code_review_platform.review.github.dto.GithubReviewRequest;
 import com.aicode.code_review_platform.review.github.dto.ReviewSubmissionResponse;
+import com.aicode.code_review_platform.review.github.exception.GithubReviewException;
 import com.aicode.code_review_platform.review.github.service.ChunkGeneratorService;
 import com.aicode.code_review_platform.review.github.service.CodeReaderService;
 import com.aicode.code_review_platform.review.github.service.RepositoryCloneService;
 import com.aicode.code_review_platform.review.github.service.RepositoryScannerService;
-import com.aicode.code_review_platform.review.websocket.NotificationService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
+import com.aicode.code_review_platform.review.github.service.ReviewChunkService;
+import com.aicode.code_review_platform.review.rabbitmq.ChunkProducerService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import tools.jackson.databind.ObjectMapper;
 
+import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
 
+/**
+ * Orchestrates GitHub repository submission: clone, scan, chunk, persist and publish.
+ *
+ * <p>AI review happens asynchronously in the consumer of
+ * {@link com.aicode.code_review_platform.review.rabbitmq.RabbitMQConfig#CHUNK_REVIEW_QUEUE}, so
+ * this service returns as soon as every chunk has been handed to the broker.
+ */
 @Service
+@RequiredArgsConstructor
+@Slf4j
 public class GithubReviewService {
 
-    private static final Logger logger = LoggerFactory.getLogger(GithubReviewService.class);
+    private final CodeReviewRepo codeReviewRepo;
 
-    @Autowired
-    private CodeReviewRepo codeReviewRepo;
+    private final RepositoryCloneService repositoryCloneService;
 
-    @Autowired
-    private RepositoryCloneService repositoryCloneService;
+    private final RepositoryScannerService repositoryScannerService;
 
-    @Autowired
-    private RepositoryScannerService repositoryScannerService;
+    private final CodeReaderService codeReaderService;
 
-    @Autowired
-    private CodeReaderService codeReaderService;
+    private final ChunkGeneratorService chunkGeneratorService;
 
-    @Autowired
-    private ChunkGeneratorService chunkGeneratorService;
+    private final ReviewChunkService reviewChunkService;
 
-    @Autowired
-    private AIChunkReviewService aiChunkReviewService;
-
-    @Autowired
-    private ReviewAggregatorService reviewAggregatorService;
-
-    @Autowired
-    private NotificationService notificationService;
-
-    @Autowired
-    private ObjectMapper objectMapper;
+    private final ChunkProducerService chunkProducerService;
 
     public ReviewSubmissionResponse submitGithubReview(GithubReviewRequest request, User user) {
 
-        logger.info("Submitting GitHub repository review for user: {}, repository: {}", user.getEmail(), request.getRepositoryUrl());
+        // PHASE 1 - Create the review row first, so the caller has an id to poll with even if
+        // every later phase fails. PENDING means "accepted, nothing processed yet".
+        CodeReview review = codeReviewRepo.save(
+                CodeReview.builder()
+                        .sourceType(AppEnums.ReviewSourceType.GITHUB)
+                        .repositoryUrl(request.getRepositoryUrl())
+                        .status(AppEnums.ReviewStatus.PENDING)
+                        .user(user)
+                        .build()
+        );
 
-        CodeReview review = CodeReview.builder().sourceType(AppEnums.ReviewSourceType.GITHUB).repositoryUrl(request.getRepositoryUrl()).status(AppEnums.ReviewStatus.PENDING).user(user).build();
+        log.info(
+                "Starting GitHub review for reviewId={}, repository={}",
+                review.getId(),
+                review.getRepositoryUrl()
+        );
 
-        CodeReview saved = codeReviewRepo.save(review);
-
-        saved.setStatus(AppEnums.ReviewStatus.PROCESSING);
-        codeReviewRepo.save(saved);
-
+        // Declared outside the try so the finally block can clean up even if the clone itself blew up.
         Path repositoryRoot = null;
 
         try {
-            repositoryRoot = repositoryCloneService.cloneRepository(saved.getRepositoryUrl(), saved.getId());
-            logger.info("Repository cloned for review id: {} at path: {}", saved.getId(), repositoryRoot);
+            // PHASE 2 - Clone the repository into a temp directory named after the review id.
+            // This is the only phase that touches the network; everything after it works on local files.
+            repositoryRoot = repositoryCloneService.cloneRepository(review.getRepositoryUrl(), review.getId());
+            log.info("Cloned repository for reviewId={} at path={}", review.getId(), repositoryRoot);
 
-            List<Path> paths = repositoryScannerService.scanRepository(repositoryRoot);
-            logger.info("Scanned repository for review id: {}, found {} candidate file(s)", saved.getId(), paths.size());
+            // PHASE 3-5 - Turn the cloned directory into in-memory chunks (scan -> read -> pack).
+            List<CodeChunk> chunks = generateChunks(repositoryRoot, review.getId());
 
-            List<CodeFile> files = codeReaderService.readFiles(paths, repositoryRoot);
-            logger.info("Read {} file(s) for review id: {}", files.size(), saved.getId());
+            // PHASE 6 - Persist one review_chunks row per chunk, each carrying its own pre-built
+            // prompt. This is the durability boundary: after this line the work survives a restart
+            // and no longer depends on the cloned files, which are about to be deleted.
+            List<ReviewChunk> reviewChunks = reviewChunkService.createPendingChunks(review, chunks);
+            log.info("Saved {} ReviewChunks for reviewId={}", reviewChunks.size(), review.getId());
 
-            List<CodeChunk> chunks = chunkGeneratorService.generateChunks(files);
+            // PHASE 7 - Hand every chunk to RabbitMQ. From here the AI work happens in the consumer,
+            // off the request thread.
+            publishChunks(reviewChunks, review.getId());
 
-            if (chunks.isEmpty()) {
-                throw new IllegalArgumentException("No supported source files found in repository (supported extensions: .java, .js, .ts, .jsx, .tsx, .py)");
-            }
+            // PHASE 8 - Everything is queued, so the review moves from PENDING to PROCESSING.
+            // It will reach COMPLETED only once the consumer has finished all chunks and aggregated them.
+            review.setStatus(AppEnums.ReviewStatus.PROCESSING);
+            CodeReview processing = codeReviewRepo.save(review);
 
-            List<AIReviewResult> chunkReviews = aiChunkReviewService.reviewChunks(chunks);
-            logger.info("Completed AI review of {} chunk(s) for review id: {}", chunkReviews.size(), saved.getId());
+            log.info("GitHub review submitted successfully for reviewId={}", review.getId());
 
-            RepositoryReviewContext context = RepositoryReviewContext.builder().review(saved).chunks(chunks).chunkReviews(chunkReviews).build();
-
-            AIReviewResult result = reviewAggregatorService.aggregate(context);
-            logger.info("Aggregated review result for review id: {}", saved.getId());
-
-            saved.setReviewResult(objectMapper.writeValueAsString(result));
-            saved.setStatus(AppEnums.ReviewStatus.COMPLETED);
-            codeReviewRepo.save(saved);
-
-            notificationService.notifyReviewCompleted(saved.getId());
-
-            logger.info("GitHub review completed for id: {}", saved.getId());
-
-            return mapToResponse(saved);
+            // PHASE 9 - Reply with the review id and its current (still unfinished) state.
+            return mapToResponse(processing);
 
         } catch (Exception e) {
-            logger.error("GitHub review failed for id: {}, error: {}", saved.getId(), e.getMessage(), e);
+            // Any phase above failing means nothing usable was queued: mark the review FAILED so
+            // the client stops polling, and rethrow as a typed exception for the controller advice.
+            log.error(
+                    "GitHub review submission failed for reviewId={}: {}",
+                    review.getId(),
+                    e.getMessage(),
+                    e
+            );
 
-            saved.setStatus(AppEnums.ReviewStatus.FAILED);
-            codeReviewRepo.save(saved);
+            review.setStatus(AppEnums.ReviewStatus.FAILED);
+            codeReviewRepo.save(review);
 
-            throw new RuntimeException("Failed to review GitHub repository", e);
+            throw new GithubReviewException("Failed to submit GitHub repository for review", e);
 
         } finally {
+            // Always remove the clone - success or failure. The chunks in the database already hold
+            // everything the consumer needs, so keeping the checkout around would only waste disk.
             repositoryCloneService.deleteRepository(repositoryRoot);
         }
     }
 
+    private List<CodeChunk> generateChunks(Path repositoryRoot, Long reviewId) throws IOException {
+
+        // PHASE 3 - Walk the clone and keep only reviewable source files, dropping build output,
+        // .git internals and dependency folders. Returns paths only, nothing is read yet.
+        List<Path> paths = repositoryScannerService.scanRepository(repositoryRoot);
+        log.info("Scanned repository for reviewId={}, found {} candidate file(s)", reviewId, paths.size());
+
+        // PHASE 4 - Load the contents of those paths into memory as CodeFile objects, each tagged
+        // with its language and repo-relative path. Unreadable files are skipped, not fatal.
+        List<CodeFile> files = codeReaderService.readFiles(paths, repositoryRoot);
+        log.info("Read {} file(s) for reviewId={}", files.size(), reviewId);
+
+        // PHASE 5 - Pack the files into chunks that each fit under the model's size budget,
+        // because a whole repository will not fit into one AI request.
+        List<CodeChunk> chunks = chunkGeneratorService.generateChunks(files);
+        log.info("Generated {} chunks for reviewId={}", chunks.size(), reviewId);
+
+        // Nothing reviewable in the repository - fail loudly here rather than queueing zero chunks
+        // and leaving the review stuck in PROCESSING forever.
+        if (chunks.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "No supported source files found in repository (supported extensions: .java, .js, .ts, .jsx, .tsx, .py)"
+            );
+        }
+
+        return chunks;
+    }
+
+    private void publishChunks(List<ReviewChunk> reviewChunks, Long reviewId) {
+
+        log.info("Publishing {} ReviewChunks for reviewId={}", reviewChunks.size(), reviewId);
+
+        // One message per chunk, so chunks are reviewed independently and can be spread across
+        // however many consumers are running. A failure part-way propagates and fails the submission.
+        reviewChunks.forEach(chunkProducerService::publish);
+    }
+
     private ReviewSubmissionResponse mapToResponse(CodeReview review) {
 
-        return ReviewSubmissionResponse.builder().id(review.getId()).repositoryUrl(review.getRepositoryUrl()).reviewResult(review.getReviewResult()).status(review.getStatus()).createdAt(review.getCreatedAt()).build();
+        // Shapes the entity into the API response. reviewResult is still null at submission time -
+        // it gets filled in later, once the consumer aggregates the per-chunk results.
+        return ReviewSubmissionResponse.builder()
+                .id(review.getId())
+                .repositoryUrl(review.getRepositoryUrl())
+                .reviewResult(review.getReviewResult())
+                .status(review.getStatus())
+                .createdAt(review.getCreatedAt())
+                .build();
     }
 
 }
