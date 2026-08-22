@@ -1,8 +1,16 @@
+# Template for src/main/resources/application.properties (which is gitignored).
+# Contains no secrets - every credential is read from .env / the environment.
+
 spring.application.name=code-review-platform
 
-spring.datasource.url=jdbc:postgresql://localhost:5432/aicode
-spring.datasource.username=YOUR_DB_USERNAME
-spring.datasource.password=YOUR_DB_PASSWORD
+# Load .env from the working directory when present, so a local `mvn spring-boot:run`
+# gets the same values docker-compose injects as real environment variables.
+# `optional:` keeps startup working in the container, where no .env is shipped.
+spring.config.import=optional:file:.env[.properties]
+
+spring.datasource.url=${DB_URL:jdbc:postgresql://localhost:5432/aicode}
+spring.datasource.username=${DB_USERNAME:postgres}
+spring.datasource.password=${DB_PASSWORD}
 
 spring.jpa.hibernate.ddl-auto=update
 spring.jpa.show-sql=true
@@ -12,22 +20,29 @@ logging.level.root=INFO
 logging.level.org.springframework=INFO
 logging.level.com.aicode=DEBUG
 
-logging.pattern.console=%d{yyyy-MM-dd HH:mm:ss} - %msg%n
+logging.pattern.console=%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n
 
-spring.rabbitmq.host=localhost
-spring.rabbitmq.port=5672
-spring.rabbitmq.username=YOUR_RABBITMQ_USERNAME
-spring.rabbitmq.password=YOUR_RABBITMQ_PASSWORD
+spring.rabbitmq.host=${RABBITMQ_HOST:localhost}
+spring.rabbitmq.port=${RABBITMQ_PORT:5672}
+spring.rabbitmq.username=${RABBITMQ_USERNAME:guest}
+spring.rabbitmq.password=${RABBITMQ_PASSWORD:guest}
 
-JWT_SECRET_KEY=YOUR_JWT_SECRET_KEY
+# A chunk that fails is already recorded as FAILED in the database, so requeueing it would only
+# redeliver the same poison message forever. Retry and dead-lettering are a later milestone.
+spring.rabbitmq.listener.simple.default-requeue-rejected=false
 
-gemini.api.key=YOUR_GEMINI_API_KEY
-gemini.api.url=https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+# Secrets are deliberately left without a default: a fallback value here would silently
+# ship a known signing key / missing credential instead of failing at startup.
+app.jwt.secret=${JWT_SECRET_KEY}
+app.jwt.expiration-ms=${JWT_EXPIRATION_MS:36000000}
 
-app.upload-dir=uploads
+gemini.api.key=${GEMINI_API_KEY}
+gemini.api.url=${GEMINI_API_URL:https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent}
+
+app.upload-dir=${APP_UPLOAD_DIR:uploads}
 spring.servlet.multipart.max-file-size=10MB
 spring.servlet.multipart.max-request-size=10MB
 
-app.repository.temp-dir=temp-repositories
+app.repository.temp-dir=${APP_REPOSITORY_TEMP_DIR:temp-repositories}
 
-app.ai.max-chunk-size=20000
+app.ai.max-chunk-size=${APP_AI_MAX_CHUNK_SIZE:20000}

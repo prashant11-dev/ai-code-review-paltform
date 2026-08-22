@@ -1,0 +1,17 @@
+.git
+.gitignore
+.gitattributes
+.idea
+.vscode
+.claude
+.mvn
+mvnw
+mvnw.cmd
+HELP.md
+src
+uploads
+temp-repositories
+*.log
+.env
+target/*
+!target/*.jar
