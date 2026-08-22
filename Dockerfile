@@ -1,9 +1,41 @@
-FROM eclipse-temurin:23-jre
+# =========================
+# Stage 1: Build
+# =========================
+FROM maven:3.9-eclipse-temurin-23 AS build
+
 WORKDIR /app
-RUN useradd -r -u 1001 appuser \
- && mkdir -p /app/uploads /app/temp-repositories \
- && chown -R appuser /app
-COPY --chown=appuser target/*.jar app.jar
+
+COPY pom.xml .
+
+RUN mvn dependency:go-offline
+
+COPY src ./src
+
+RUN mvn clean package -DskipTests
+
+
+# =========================
+# Stage 2: Runtime
+# =========================
+FROM eclipse-temurin:23-jre
+
+WORKDIR /app
+
+# -m creates the home dir: JGit resolves ~/.gitconfig via user.home when cloning,
+# and useradd points appuser at a /home/appuser it would not otherwise create.
+RUN useradd -r -u 1001 -m appuser
+
+COPY --from=build /app/target/*.jar app.jar
+
+# FileUploadService and RepositoryCloneServiceImpl call Files.createDirectories()
+# at request time, inside this root-owned WORKDIR. They must exist and belong to
+# appuser up front - otherwise the app starts cleanly and then fails on the first
+# upload or repo review with AccessDeniedException.
+RUN mkdir -p /app/uploads /app/temp-repositories \
+ && chown -R appuser:appuser /app
+
 USER appuser
+
 EXPOSE 8080
+
 ENTRYPOINT ["java", "-jar", "app.jar"]
