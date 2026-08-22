@@ -26,6 +26,10 @@ public class SecurityConfig {
                 .csrf(csrf -> csrf.disable())
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/auth/**").permitAll()
+                        // Only /health, never /actuator/**: the wildcard would also expose
+                        // /actuator/env and /actuator/configprops, which print resolved
+                        // configuration - DB credentials and the Gemini key included.
+                        .requestMatchers("/actuator/health").permitAll()
                         .anyRequest().authenticated()
                 )
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)

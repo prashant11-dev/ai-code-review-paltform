@@ -27,12 +27,7 @@ RUN useradd -r -u 1001 -m appuser
 
 COPY --from=build /app/target/*.jar app.jar
 
-# FileUploadService and RepositoryCloneServiceImpl call Files.createDirectories()
-# at request time, inside this root-owned WORKDIR. They must exist and belong to
-# appuser up front - otherwise the app starts cleanly and then fails on the first
-# upload or repo review with AccessDeniedException.
-RUN mkdir -p /app/uploads /app/temp-repositories \
- && chown -R appuser:appuser /app
+RUN chown appuser:appuser app.jar
 
 USER appuser
 
