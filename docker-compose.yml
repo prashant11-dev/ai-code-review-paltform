@@ -45,6 +45,10 @@ services:
     ports:
       - "8080:8080"
     environment:
+      # application-prod.properties reads every connection detail and secret
+      # from the environment, with no localhost fallbacks.
+      SPRING_PROFILES_ACTIVE: prod
+
       # Service hostnames, not localhost - these override the .env values,
       # which are written for running the app outside of compose.
       DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
@@ -66,5 +70,11 @@ services:
       APP_REPOSITORY_TEMP_DIR: ${APP_REPOSITORY_TEMP_DIR}
       APP_AI_MAX_CHUNK_SIZE: ${APP_AI_MAX_CHUNK_SIZE}
 
+    volumes:
+      - uploads_data:/app/uploads
+      - repositories_data:/app/temp-repositories
+
 volumes:
   postgres_data:
+  uploads_data:
+  repositories_data:

@@ -27,7 +27,11 @@ RUN useradd -r -u 1001 -m appuser
 
 COPY --from=build /app/target/*.jar app.jar
 
-RUN chown appuser:appuser app.jar
+# The compose named volumes mount onto these two paths. Docker only inherits
+# ownership from the image when the directory already exists there - otherwise
+# it creates them root-owned and appuser cannot write uploads or clone repos.
+RUN mkdir -p /app/uploads /app/temp-repositories \
+    && chown -R appuser:appuser /app/uploads /app/temp-repositories app.jar
 
 USER appuser
 

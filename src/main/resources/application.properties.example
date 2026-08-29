@@ -1,5 +1,10 @@
 # Template for src/main/resources/application.properties (which is gitignored).
-# Contains no secrets - every credential is read from .env / the environment.
+# Copy to application.properties. Contains no secrets - every credential is read
+# from .env / the environment.
+#
+# Environment-specific values live in the committed profile files next to this one:
+#   application-dev.properties   - localhost infrastructure, verbose logging
+#   application-prod.properties  - all connection details from the environment
 
 spring.application.name=code-review-platform
 
@@ -8,29 +13,34 @@ spring.application.name=code-review-platform
 # `optional:` keeps startup working in the container, where no .env is shipped.
 spring.config.import=optional:file:.env[.properties]
 
-spring.datasource.url=${DB_URL:jdbc:postgresql://localhost:5432/aicode}
-spring.datasource.username=${DB_USERNAME:postgres}
-spring.datasource.password=${DB_PASSWORD}
+# Profile used when nothing sets SPRING_PROFILES_ACTIVE / -Dspring-boot.run.profiles,
+# so a bare `mvn spring-boot:run` and `mvn test` behave like they did before profiles
+# existed. docker-compose sets SPRING_PROFILES_ACTIVE=prod, which overrides this.
+spring.profiles.default=dev
 
+# ---------------------------------------------------------------------------
+# JPA
+# ---------------------------------------------------------------------------
+# ddl-auto stays shared: prod is still bootstrapped from an empty volume by
+# docker-compose, so `validate` would fail on first start. Tightening this
+# belongs with introducing a schema migration tool, not with profiles.
 spring.jpa.hibernate.ddl-auto=update
-spring.jpa.show-sql=true
-spring.jpa.properties.hibernate.format_sql=true
 
-logging.level.root=INFO
-logging.level.org.springframework=INFO
-logging.level.com.aicode=DEBUG
-
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
 logging.pattern.console=%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n
 
-spring.rabbitmq.host=${RABBITMQ_HOST:localhost}
-spring.rabbitmq.port=${RABBITMQ_PORT:5672}
-spring.rabbitmq.username=${RABBITMQ_USERNAME:guest}
-spring.rabbitmq.password=${RABBITMQ_PASSWORD:guest}
-
+# ---------------------------------------------------------------------------
+# Messaging
+# ---------------------------------------------------------------------------
 # A chunk that fails is already recorded as FAILED in the database, so requeueing it would only
 # redeliver the same poison message forever. Retry and dead-lettering are a later milestone.
 spring.rabbitmq.listener.simple.default-requeue-rejected=false
 
+# ---------------------------------------------------------------------------
+# Secrets and application settings
+# ---------------------------------------------------------------------------
 # Secrets are deliberately left without a default: a fallback value here would silently
 # ship a known signing key / missing credential instead of failing at startup.
 app.jwt.secret=${JWT_SECRET_KEY}
@@ -46,3 +56,8 @@ spring.servlet.multipart.max-request-size=10MB
 app.repository.temp-dir=${APP_REPOSITORY_TEMP_DIR:temp-repositories}
 
 app.ai.max-chunk-size=${APP_AI_MAX_CHUNK_SIZE:20000}
+
+# ---------------------------------------------------------------------------
+# Actuator
+# ---------------------------------------------------------------------------
+management.endpoints.web.exposure.include=health,info
