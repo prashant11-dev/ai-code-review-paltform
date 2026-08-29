@@ -119,6 +119,10 @@ public class GithubReviewService {
         } finally {
             // Always remove the clone - success or failure. The chunks in the database already hold
             // everything the consumer needs, so keeping the checkout around would only waste disk.
+            //
+            // STEP 6.2 - deleteRepository never throws, so a cleanup problem is logged rather than
+            // turning an accepted submission into a failed one. A null root (the clone itself
+            // failed) is a no-op, since the clone already removed its own partial directory.
             repositoryCloneService.deleteRepository(repositoryRoot);
         }
     }
