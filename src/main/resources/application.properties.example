@@ -58,6 +58,24 @@ app.repository.temp-dir=${APP_REPOSITORY_TEMP_DIR:temp-repositories}
 app.ai.max-chunk-size=${APP_AI_MAX_CHUNK_SIZE:20000}
 
 # ---------------------------------------------------------------------------
+# Temporary storage cleanup (STEP 6.4)
+# ---------------------------------------------------------------------------
+# Safety net for the temp checkouts and uploads a crashed or restarted instance
+# left behind. The finally-block cleanup in the review flow stays the primary
+# mechanism; this only ever removes what that never got to run for.
+#
+# `enabled` is set per profile (off in dev, on in prod) - the value here is the
+# fallback for a run that activates neither. The two durations are millisecond
+# longs, matching app.jwt.expiration-ms rather than adding a second convention.
+#
+# max-age is what protects a review that is still running: it has to be
+# comfortably longer than the slowest realistic review, since anything older
+# than this is assumed to be abandoned.
+app.cleanup.enabled=${APP_CLEANUP_ENABLED:true}
+app.cleanup.interval-ms=${APP_CLEANUP_INTERVAL_MS:3600000}
+app.cleanup.max-age-ms=${APP_CLEANUP_MAX_AGE_MS:7200000}
+
+# ---------------------------------------------------------------------------
 # Actuator
 # ---------------------------------------------------------------------------
 management.endpoints.web.exposure.include=health,info

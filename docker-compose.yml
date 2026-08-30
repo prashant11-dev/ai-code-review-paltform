@@ -70,7 +70,17 @@ services:
       APP_REPOSITORY_TEMP_DIR: ${APP_REPOSITORY_TEMP_DIR}
       APP_AI_MAX_CHUNK_SIZE: ${APP_AI_MAX_CHUNK_SIZE}
 
+      # Temporary storage cleanup. `:-` defaults, unlike the variables above,
+      # because an .env written before STEP 6.4 will not have these keys - and
+      # a bare ${VAR} would then pass an empty string, which fails to bind.
+      APP_CLEANUP_ENABLED: ${APP_CLEANUP_ENABLED:-true}
+      APP_CLEANUP_INTERVAL_MS: ${APP_CLEANUP_INTERVAL_MS:-3600000}
+      APP_CLEANUP_MAX_AGE_MS: ${APP_CLEANUP_MAX_AGE_MS:-7200000}
+
     volumes:
+      # The cleanup below only ever removes stale entries *inside* these mount
+      # points - the volumes themselves, and the directories they mount onto,
+      # are never touched.
       - uploads_data:/app/uploads
       - repositories_data:/app/temp-repositories
 

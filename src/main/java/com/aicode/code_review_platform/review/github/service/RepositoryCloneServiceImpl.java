@@ -24,8 +24,12 @@ public class RepositoryCloneServiceImpl implements RepositoryCloneService {
     /**
      * STEP 6.2 - every directory this service creates carries this prefix, and cleanup refuses to
      * touch anything that does not. It is the marker that says "this directory is ours to delete".
+     *
+     * <p>STEP 6.4 - public so the scheduled cleanup can recognise our entries while scanning the
+     * temp directory. It still deletes through {@link #deleteRepository(Path)}, which applies this
+     * same rule again.
      */
-    private static final String REPOSITORY_DIRECTORY_PREFIX = "review-";
+    public static final String REPOSITORY_DIRECTORY_PREFIX = "review-";
 
     @Autowired
     private RepositoryConfig repositoryConfig;

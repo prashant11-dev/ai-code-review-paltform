@@ -33,8 +33,12 @@ public class FileUploadService {
     /**
      * STEP 6.3 - every directory this service creates carries this prefix, and cleanup refuses to
      * touch anything that does not. It is the marker that says "this directory is ours to delete".
+     *
+     * <p>STEP 6.4 - public so the scheduled cleanup can recognise our entries while scanning the
+     * upload root. It still deletes through {@link #deleteUpload(Path)}, which applies this same
+     * rule again.
      */
-    private static final String UPLOAD_DIRECTORY_PREFIX = "upload-";
+    public static final String UPLOAD_DIRECTORY_PREFIX = "upload-";
 
     @Autowired
     private FileStorageConfig fileStorageConfig;
