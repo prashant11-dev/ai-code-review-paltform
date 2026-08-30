@@ -164,6 +164,9 @@ import java.util.List;
             logger.error("GitHub review failed for id: {} at repository {}: {}", review.getId(), review.getRepositoryUrl(), e.getMessage(), e);
             throw new RuntimeException("Failed to review GitHub repository", e);
         } finally {
+            // STEP 6.2 - the clone is removed whether the review succeeded or failed, and whatever
+            // phase it failed in (scan, read, chunk, AI). deleteRepository never throws, so it
+            // cannot replace the original outcome; a null root (clone itself failed) is a no-op.
             repositoryCloneService.deleteRepository(repositoryRoot);
         }
     }

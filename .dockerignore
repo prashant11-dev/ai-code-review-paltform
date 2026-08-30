@@ -1,0 +1,25 @@
+# The build now compiles inside the image (multi-stage), so pom.xml and src/
+# must stay IN the build context. Only things the build cannot use are listed.
+.git
+.gitignore
+.gitattributes
+.idea
+.vscode
+.claude
+HELP.md
+
+# Maven wrapper: the build stage uses the `mvn` shipped in the base image.
+.mvn
+mvnw
+mvnw.cmd
+
+# Host build output - the image builds its own jar. Excluding this also keeps
+# the 72MB host jar out of the context that gets sent to the daemon.
+target
+
+# Runtime data and secrets, never part of an image.
+uploads
+temp-repositories
+*.log
+.env
+.env.example

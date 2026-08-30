@@ -1,33 +1,81 @@
+# Template for src/main/resources/application.properties (which is gitignored).
+# Copy to application.properties. Contains no secrets - every credential is read
+# from .env / the environment.
+#
+# Environment-specific values live in the committed profile files next to this one:
+#   application-dev.properties   - localhost infrastructure, verbose logging
+#   application-prod.properties  - all connection details from the environment
+
 spring.application.name=code-review-platform
 
-spring.datasource.url=jdbc:postgresql://localhost:5432/aicode
-spring.datasource.username=YOUR_DB_USERNAME
-spring.datasource.password=YOUR_DB_PASSWORD
+# Load .env from the working directory when present, so a local `mvn spring-boot:run`
+# gets the same values docker-compose injects as real environment variables.
+# `optional:` keeps startup working in the container, where no .env is shipped.
+spring.config.import=optional:file:.env[.properties]
 
+# Profile used when nothing sets SPRING_PROFILES_ACTIVE / -Dspring-boot.run.profiles,
+# so a bare `mvn spring-boot:run` and `mvn test` behave like they did before profiles
+# existed. docker-compose sets SPRING_PROFILES_ACTIVE=prod, which overrides this.
+spring.profiles.default=dev
+
+# ---------------------------------------------------------------------------
+# JPA
+# ---------------------------------------------------------------------------
+# ddl-auto stays shared: prod is still bootstrapped from an empty volume by
+# docker-compose, so `validate` would fail on first start. Tightening this
+# belongs with introducing a schema migration tool, not with profiles.
 spring.jpa.hibernate.ddl-auto=update
-spring.jpa.show-sql=true
-spring.jpa.properties.hibernate.format_sql=true
 
-logging.level.root=INFO
-logging.level.org.springframework=INFO
-logging.level.com.aicode=DEBUG
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+logging.pattern.console=%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n
 
-logging.pattern.console=%d{yyyy-MM-dd HH:mm:ss} - %msg%n
+# ---------------------------------------------------------------------------
+# Messaging
+# ---------------------------------------------------------------------------
+# A chunk that fails is already recorded as FAILED in the database, so requeueing it would only
+# redeliver the same poison message forever. Retry and dead-lettering are a later milestone.
+spring.rabbitmq.listener.simple.default-requeue-rejected=false
 
-spring.rabbitmq.host=localhost
-spring.rabbitmq.port=5672
-spring.rabbitmq.username=YOUR_RABBITMQ_USERNAME
-spring.rabbitmq.password=YOUR_RABBITMQ_PASSWORD
+# ---------------------------------------------------------------------------
+# Secrets and application settings
+# ---------------------------------------------------------------------------
+# Secrets are deliberately left without a default: a fallback value here would silently
+# ship a known signing key / missing credential instead of failing at startup.
+app.jwt.secret=${JWT_SECRET_KEY}
+app.jwt.expiration-ms=${JWT_EXPIRATION_MS:36000000}
 
-JWT_SECRET_KEY=YOUR_JWT_SECRET_KEY
+gemini.api.key=${GEMINI_API_KEY}
+gemini.api.url=${GEMINI_API_URL:https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent}
 
-gemini.api.key=YOUR_GEMINI_API_KEY
-gemini.api.url=https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
-
-app.upload-dir=uploads
+app.upload-dir=${APP_UPLOAD_DIR:uploads}
 spring.servlet.multipart.max-file-size=10MB
 spring.servlet.multipart.max-request-size=10MB
 
-app.repository.temp-dir=temp-repositories
+app.repository.temp-dir=${APP_REPOSITORY_TEMP_DIR:temp-repositories}
 
-app.ai.max-chunk-size=20000
+app.ai.max-chunk-size=${APP_AI_MAX_CHUNK_SIZE:20000}
+
+# ---------------------------------------------------------------------------
+# Temporary storage cleanup (STEP 6.4)
+# ---------------------------------------------------------------------------
+# Safety net for the temp checkouts and uploads a crashed or restarted instance
+# left behind. The finally-block cleanup in the review flow stays the primary
+# mechanism; this only ever removes what that never got to run for.
+#
+# `enabled` is set per profile (off in dev, on in prod) - the value here is the
+# fallback for a run that activates neither. The two durations are millisecond
+# longs, matching app.jwt.expiration-ms rather than adding a second convention.
+#
+# max-age is what protects a review that is still running: it has to be
+# comfortably longer than the slowest realistic review, since anything older
+# than this is assumed to be abandoned.
+app.cleanup.enabled=${APP_CLEANUP_ENABLED:true}
+app.cleanup.interval-ms=${APP_CLEANUP_INTERVAL_MS:3600000}
+app.cleanup.max-age-ms=${APP_CLEANUP_MAX_AGE_MS:7200000}
+
+# ---------------------------------------------------------------------------
+# Actuator
+# ---------------------------------------------------------------------------
+management.endpoints.web.exposure.include=health,info

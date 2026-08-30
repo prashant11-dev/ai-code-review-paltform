@@ -1,0 +1,90 @@
+services:
+
+  postgres:
+    image: postgres:16
+    container_name: ai-code-review-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:4-management
+    container_name: ai-code-review-rabbitmq
+    environment:
+      # The broker has to be created with the same credentials the backend
+      # authenticates with, otherwise custom values in .env are rejected.
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: .
+    container_name: ai-code-review-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      # application-prod.properties reads every connection detail and secret
+      # from the environment, with no localhost fallbacks.
+      SPRING_PROFILES_ACTIVE: prod
+
+      # Service hostnames, not localhost - these override the .env values,
+      # which are written for running the app outside of compose.
+      DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      DB_USERNAME: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS}
+
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GEMINI_API_URL: ${GEMINI_API_URL}
+
+      APP_UPLOAD_DIR: ${APP_UPLOAD_DIR}
+      APP_REPOSITORY_TEMP_DIR: ${APP_REPOSITORY_TEMP_DIR}
+      APP_AI_MAX_CHUNK_SIZE: ${APP_AI_MAX_CHUNK_SIZE}
+
+      # Temporary storage cleanup. `:-` defaults, unlike the variables above,
+      # because an .env written before STEP 6.4 will not have these keys - and
+      # a bare ${VAR} would then pass an empty string, which fails to bind.
+      APP_CLEANUP_ENABLED: ${APP_CLEANUP_ENABLED:-true}
+      APP_CLEANUP_INTERVAL_MS: ${APP_CLEANUP_INTERVAL_MS:-3600000}
+      APP_CLEANUP_MAX_AGE_MS: ${APP_CLEANUP_MAX_AGE_MS:-7200000}
+
+    volumes:
+      # The cleanup below only ever removes stale entries *inside* these mount
+      # points - the volumes themselves, and the directories they mount onto,
+      # are never touched.
+      - uploads_data:/app/uploads
+      - repositories_data:/app/temp-repositories
+
+volumes:
+  postgres_data:
+  uploads_data:
+  repositories_data:
